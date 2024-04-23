@@ -1,0 +1,9 @@
+secrets/
+terraform.tfvars
+terraform.tfstate
+terraform.tfstate.backup
+.terraform
+.terraform.lock.hcl
+remote_setup.sh
+runbook.sh
+setup.sh
