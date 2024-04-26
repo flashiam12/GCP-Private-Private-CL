@@ -3,7 +3,9 @@
 
 This project is a live demonstration of Cluster link chaining. This is intended to be used as a demo to showcase cluster linking of two clusters in different regions on Google Cloud VPC. The idea is to use jump clusters with cluster chaining to achieve it. 
 
+## Architecture 
 
+![alt text](example/private-private-gcp.png)
 
 
 ## Setup 
