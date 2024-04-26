@@ -51,6 +51,7 @@ terraform init
 ##### b. Define Terraform for GCP & Confluent Components
 ```console
 terraform apply -target module.gcp-setup
+terraform apply -target module.confluent-public-0 module.confluent-private-0 module.confluent-private-1
 ```
 
 ##### c. Define Private Link between Confluent & GCP
@@ -333,23 +334,112 @@ export US_WEST4_MIRROR_TOPIC="west4-ha-poc"
 
 confluent kafka mirror create $US_WEST4_MIRROR_TOPIC --link dexcom-private-to-public-0 --cluster $WEST4_PUBLIC
 ```
-```
+
 
 ### Runbook for Demo
 
 #### 1. Setup producers & consumers
+
+##### a. Setup for us-west2 cluster
+```console
+
+# Here we are producing to us-west2-poc topic and consuming from us-west4-poc topic
+
+gcloud compute ssh --zone "us-west2-a" "dexcom-poc-host-us-west2" --project "sales-engineering-206314"
+
+export CONFLUENT_ENV_ID=
+export WEST2_PRIVATE_BOOTSTRAP=
+export WEST2_PRIVATE_CLUSTER_ID=
+export WEST2_PRIVATE_CLUSTER_APIKEY=
+export WEST2_PRIVATE_CLUSTER_APISECRET=
+
+export PATH=$(pwd)/confluent:$PATH
+confluent login 
+confluent env use $CONFLUENT_ENV_ID
+
+#Produce to us-west2 private
+confluent kafka topic produce west2-ha-poc --api-key $WEST2_PRIVATE_CLUSTER_APIKEY --api-secret $WEST2_PRIVATE_CLUSTER_APISECRET --bootstrap $WEST2_PRIVATE_BOOTSTRAP --cluster $WEST2_PRIVATE_CLUSTER_ID
+
+#Consume from us-west4 private
+confluent kafka topic consume west4-ha-poc --api-key $WEST2_PRIVATE_CLUSTER_APIKEY --api-secret $WEST2_PRIVATE_CLUSTER_APISECRET --bootstrap $WEST2_PRIVATE_BOOTSTRAP --cluster $WEST2_PRIVATE_CLUSTER_ID --from-beginning
+
+```
+
+##### b. Setup for us-west4 cluster
+
+```console
+
+# Here we are producing to us-west4-poc topic and consuming from us-west2-poc topic
+
+gcloud compute ssh --zone "us-west4-a" "dexcom-poc-host-us-west4" --project "sales-engineering-206314"
+
+export CONFLUENT_ENV_ID=
+export WEST4_PRIVATE_BOOTSTRAP=
+export WEST4_PRIVATE_CLUSTER=
+export WEST4_PRIVATE_CLUSTER_APIKEY=
+export WEST4_PRIVATE_CLUSTER_APISECRET=
+
+export PATH=$(pwd)/confluent:$PATH
+confluent login 
+confluent env use $CONFLUENT_ENV_ID
+
+#Produce to us-west4 private
+confluent kafka topic produce west4-ha-poc --api-key $WEST4_PRIVATE_CLUSTER_APIKEY --api-secret $WEST4_PRIVATE_CLUSTER_APISECRET --bootstrap $WEST4_PRIVATE_BOOTSTRAP --cluster $WEST4_PRIVATE_CLUSTER
+
+#Consume from us-west4 private
+confluent kafka topic consume west2-ha-poc --api-key $WEST4_PRIVATE_CLUSTER_APIKEY --api-secret $WEST4_PRIVATE_CLUSTER_APISECRET --bootstrap $WEST4_PRIVATE_BOOTSTRAP --cluster $WEST4_PRIVATE_CLUSTER --from-beginning
+
+```
 #### 2. Inject network connectivity issues
-#### 3. Produce/Consume during network failure - Failover
-#### 4. Produce/Consume after network failure - Failback 
+
+##### 0. Produce in us-west4-poc topic in us-west4 
+```console
+# Kafka client connected to us-west4
+confluent kafka topic produce west4-ha-poc --api-key $WEST4_PRIVATE_CLUSTER_APIKEY --api-secret $WEST4_PRIVATE_CLUSTER_APISECRET --bootstrap $WEST4_PRIVATE_BOOTSTRAP --cluster $WEST4_PRIVATE_CLUSTER
+```
+##### i. Destroy private service connections in us-west4 (Primary)
+```console
+terraform destroy -target module.private-link-0 
+```
+##### ii. Producer Client connected to the us-west4 will start to fail
+```console
+# Start producing to us-west2 cluster to us-west4-poc topic - Failover Step
+
+# Theoritically signfies RTO, this could be reduced to 0 if there is smart DNS failover routing for the two clusters configured in the client. 
+
+confluent kafka topic produce west4-ha-poc --api-key $WEST2_PRIVATE_CLUSTER_APIKEY --api-secret $WEST2_PRIVATE_CLUSTER_APISECRET --bootstrap $WEST2_PRIVATE_BOOTSTRAP --cluster $WEST2_PRIVATE_CLUSTER_ID
+```
+##### iv. Bring back the private service connect connection
+```
+terraform apply -target module.private-link-0 
+```
+##### v. Check from the consumer client in us-west4 for us-west4-poc topic if data in failover state was replicated
+```console
+
+# Theoritically signifies RPO 
+
+confluent kafka topic consume west2-ha-poc --api-key $WEST4_PRIVATE_CLUSTER_APIKEY --api-secret $WEST4_PRIVATE_CLUSTER_APISECRET --bootstrap $WEST4_PRIVATE_BOOTSTRAP --cluster $WEST4_PRIVATE_CLUSTER --from-beginning
+```
+
+##### vi. Start producing back to us-west4
+```console
+# Failback step to primary - Optional 
+
+confluent kafka topic consume west2-ha-poc --api-key $WEST4_PRIVATE_CLUSTER_APIKEY --api-secret $WEST4_PRIVATE_CLUSTER_APISECRET --bootstrap $WEST4_PRIVATE_BOOTSTRAP --cluster $WEST4_PRIVATE_CLUSTER --from-beginning
+```
+
+#### Conclusion - 
+```
+# We can observe that in the failover state we were still able to produce in us-west2, and there was achieved RP0=0 and RT0 depends on the automated failover implemented for DNS routing for the primary-dr cluster switching.
+```
 #### 5. Teardown
 
-
+```console
+terraform destroy -target module.private-link-0 module.private-link-1
+terraform destroy -target module.gcp-setup
+terraform destroy -target module.confluent-public-0 module.confluent-private-0 module.confluent-private-1
+```
 ## Documentation
 
 [Documentation](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/private-networking.html#cluster-link-chaining-and-jump-clusters)
-
-
-## Demo
-
-Insert gif or link to demo
 
